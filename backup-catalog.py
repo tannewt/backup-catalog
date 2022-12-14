@@ -20,6 +20,8 @@ except sqlite3.OperationalError:
 # use system_profiler -json -detailLevel full SPUSBDataType to get hard drive
 # (usb) serial number
 
+# cur.execute("UPDATE directories SET scan_mtime = 0")
+
 print("listing")
 i = 0
 while True:
@@ -27,18 +29,26 @@ while True:
     res = res.fetchone()
     if res is None:
         break
-    rfn = root / res[0]
-    ds = rfn.stat()
-    for fn in rfn.iterdir():
+    d = root / res[0]
+    if not d.exists():
+        mt = time.time_ns()
+        cur.execute("UPDATE directories SET scan_mtime = ? WHERE filepath = ?", (mt, res[0]))
+        continue
+    ds = d.stat()
+    for fn in d.iterdir():
+        rfn = fn.relative_to(root)
         if i % 100 == 0:
-            print(i, fn)
+            print(i, rfn)
         i += 1
         if fn.is_dir():
-            cur.execute("INSERT INTO directories VALUES (?, ?, ?)", (str(fn), fn.stat().st_mtime_ns, 0))
+            try:
+                cur.execute("INSERT INTO directories VALUES (?, ?, ?)", (str(rfn), fn.stat().st_mtime_ns, 0))
+            except sqlite3.IntegrityError:
+                cur.execute("UPDATE directories SET mtime = ? WHERE filepath = ?", (fn.stat().st_mtime_ns, str(rfn)))
         elif fn.is_file():
             mimetype, _ = mimetypes.guess_type(fn)
             s = fn.stat()
-            data = (str(fn), s.st_size, None, mimetype, s.st_mtime_ns)
+            data = (str(rfn), s.st_size, None, mimetype, s.st_mtime_ns)
             try:
                 cur.execute("INSERT INTO files VALUES(?, ?, ?, ?, ?)", data)
             except sqlite3.IntegrityError:
@@ -49,12 +59,16 @@ while True:
     db.commit()
 
 print("hashing")
+i = 0
 while True:
     res = cur.execute("SELECT filepath FROM files WHERE sha256 IS NULL LIMIT 1")
     res = res.fetchone()
     if res is None:
         break
     fn = root / res[0]
+    if i % 100 == 0:
+        print(i, res[0])
+    i += 1
     try:
         f = fn.open('rb')
     except OSError:
@@ -69,5 +83,5 @@ while True:
             buf = f.read(hasher.block_size)
         sha256 = hasher.digest()
     f.close()
-    cur.execute("UPDATE files SET sha256 = ? WHERE filepath = ?", (sha256, str(fn)))
+    cur.execute("UPDATE files SET sha256 = ? WHERE filepath = ?", (sha256, res[0]))
     db.commit()
