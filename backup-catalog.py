@@ -14,8 +14,10 @@ try:
     cur.execute("CREATE TABLE directories(filepath TEXT PRIMARY KEY, mtime INTEGER, scan_mtime INTEGER)")
     cur.execute("INSERT INTO directories VALUES (?, ?, ?)", (".", root.stat().st_mtime_ns, 0))
     cur.execute("CREATE TABLE files(filepath TEXT PRIMARY KEY, size INTEGER, sha256 BLOB, mimetype TEXT, mtime INTEGER)")
+    db.commit()
     new = True
-except sqlite3.OperationalError:
+except sqlite3.OperationalError as e:
+    print("sqlite3 error", e)
     pass
 # use system_profiler -json -detailLevel full SPUSBDataType to get hard drive
 # (usb) serial number
@@ -42,7 +44,11 @@ while True:
         i += 1
         if fn.is_dir():
             try:
-                cur.execute("INSERT INTO directories VALUES (?, ?, ?)", (str(rfn), fn.stat().st_mtime_ns, 0))
+                mtime_ns = fn.stat().st_mtime_ns
+                if mtime_ns < 0:
+                    mtime_ns = 1
+                cur.execute("INSERT INTO directories VALUES (?, ?, ?)", (str(rfn), mtime_ns, 0))
+                print("insert dir", rfn)
             except sqlite3.IntegrityError:
                 cur.execute("UPDATE directories SET mtime = ? WHERE filepath = ?", (fn.stat().st_mtime_ns, str(rfn)))
         elif fn.is_file():
